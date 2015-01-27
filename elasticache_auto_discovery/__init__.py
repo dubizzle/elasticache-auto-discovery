@@ -1,43 +1,36 @@
 # -*- coding: utf-8 -*-
 
-import socket
+import telnetlib
+from distutils.version import StrictVersion
 
 
-def discover(configuration_endpoint, time_to_timeout=None):
+def discover(configuration_endpoint, time_to_timeout=None, exclude_hostnames=False):
     host, port = configuration_endpoint.split(':')
-
-    configs = []
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    if time_to_timeout is not None:
-        sock.settimeout(time_to_timeout)
-
+    client = telnetlib.Telnet(host, int(port), time_to_timeout)
     try:
-        sock.connect((host, int(port)))
-        sock.sendall('config get cluster\r\n')
-
-        data = ''
-        while True:
-            buf = sock.recv(1024);
-            data += buf
-            if data[-5:] == 'END\r\n':
-                break
-
-        lines = data.split('\n')
-
-        # 0: CONFIG cluster 0 134
-        # 1: configversion\r\n
-        # 2: hostname|ip-address|port hostname|ip-address|port ...\r\n
-        # 3:
-        # 4: END
-        # 5: blank
-        configs = [conf.split('|') for conf in lines[2].split(' ')]
-
-        sock.sendall('quit\r\n')
-
+        client.write("version\n")
+        version = client.read_until("\r\n", time_to_timeout).strip()
+        version_list = version.split(" ")
+        version = StrictVersion(version_list[1])
+        if version >= StrictVersion('1.4.14'):
+            cmd = 'config get cluster'
+        else:
+            cmd = 'get AmazonElastiCache:cluster'
+        client.write(cmd + '\n')
+        response = client.read_until("END\r\n",
+                                     time_to_timeout).strip().split('\r\n')[1]
+        response = response[response.find("\n"):].strip()
+        r = []
+        for server in response.split(' '):
+            hostname, ip, port = server.split('|')
+            port = int(port)
+            if exclude_hostnames:
+                r.append([ip, port])
+            else:
+                r.append([hostname, ip, port])
+        return r
     finally:
-        sock.close()
-
-    return configs
+        client.close()
 
 
 if __name__ == '__main__':
